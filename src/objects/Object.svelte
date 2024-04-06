@@ -6,9 +6,9 @@ Core component for direct-manipulation objects. A drag&drop source.
 <script lang="ts">
     import type { Operand } from "../messages/Operand";
     import { trigger } from "../ipc";
-    import { currentContext, currentSource } from "../stores";
+    import { currentContext, currentEffect, currentSource } from "../stores";
     import { createEventDispatcher } from "svelte";
-    import BinaryMutator from "../mutators/BinaryMutator";
+    import BinaryMutator, { type DropEffect } from "../mutators/BinaryMutator";
 
     interface $$Slots {
         default: { context: boolean; hint: string | null };
@@ -66,6 +66,11 @@ Core component for direct-manipulation objects. A drag&drop source.
                 dragHint = canDrag.hint;
                 let empty = document.createElement("div");
                 event.dataTransfer?.setDragImage(empty, 0, 0);
+            } else {
+                let effect: DropEffect =
+                    event.shiftKey && globalThis.Object.hasOwn(canDrag.hints, "copy") ? "copy" : "move";
+                event.dataTransfer!.dropEffect = effect;
+                $currentEffect = effect;
             }
         }
     }

@@ -5,8 +5,9 @@ A drop target for direct-manipulation objects.
 
 <script lang="ts">
     import type { Operand } from "../messages/Operand";
-    import BinaryMutator from "../mutators/BinaryMutator";
-    import { currentSource, currentTarget } from "../stores";
+    import BinaryMutator, { type DropEffect } from "../mutators/BinaryMutator";
+    import { currentEffect, currentSource, currentTarget } from "../stores";
+    import Object from "./Object.svelte";
 
     interface $$Slots {
         default: { target: boolean; hint: string | null };
@@ -32,6 +33,12 @@ A drop target for direct-manipulation objects.
         let canDrop = new BinaryMutator($currentSource!, operand).canDrop();
         if (canDrop.type == "yes") {
             event.preventDefault();
+
+            let effect: DropEffect =
+                event.shiftKey && globalThis.Object.hasOwn(canDrop.hints, "copy") ? "copy" : "move";
+            event.dataTransfer!.dropEffect = effect;
+            $currentEffect = effect;
+
             if (!match($currentTarget)) {
                 $currentTarget = operand;
             }
@@ -54,7 +61,7 @@ A drop target for direct-manipulation objects.
 
         let mutator = new BinaryMutator($currentSource!, operand);
         if (mutator.canDrop().type == "yes") {
-            mutator.doDrop();
+            mutator.doDrop($currentEffect);
         }
 
         $currentSource = null;

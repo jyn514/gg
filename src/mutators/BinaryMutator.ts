@@ -12,8 +12,9 @@ import ChangeMutator from "./ChangeMutator";
 import RefMutator from "./RefMutator";
 import type { StoreRef } from "../messages/StoreRef";
 
-export type RichHint = (string | ChangeId | CommitId | Extract<StoreRef, { type: "LocalBranch" } | { type: "RemoteBranch" }>)[];
-export type Eligibility = { type: "yes", hint: RichHint } | { type: "maybe", hint: string } | { type: "no" };
+export type DropEffect = "move" | "copy" | "link";
+export type RichText = (string | ChangeId | CommitId | Extract<StoreRef, { type: "LocalBranch" } | { type: "RemoteBranch" }>)[];
+export type Eligibility = { type: "yes", hints: Partial<Record<DropEffect, RichText>> } | { type: "maybe", hint: string } | { type: "no" };
 
 export default class BinaryMutator {
     #from: Operand;
@@ -25,27 +26,44 @@ export default class BinaryMutator {
     }
 
     static canDrag(from: Operand): Eligibility {
-        // can't change finalised commits
+        // can't change finalised revs
         if ((from.type == "Revision" || from.type == "Change") && from.header.is_immutable) {
             return { type: "maybe", hint: "(revision is immutable)" };
         }
 
-        // removing a parent changes the child
+        // can't change parents of finalised revs
         if (from.type == "Parent" && from.child.is_immutable) {
             return { type: "maybe", hint: "(child is immutable)" };
         } else if (from.type == "Parent" && from.child.parent_ids.length == 1) {
             return { type: "maybe", hint: "(child has only one parent)" };
         }
 
-        // can change these listed things (XXX add modes?)
+        // can potentially change revs, their parents, their changes and their refs
         if (from.type == "Revision") {
-            return { type: "yes", hint: ["Rebasing revision ", from.header.id.change] };
+            return {
+                type: "yes", hints: {
+                    move: ["Rebasing revision ", from.header.id.change],
+                    copy: ["Duplicating revision ", from.header.id.change]
+                }
+            };
         } else if (from.type == "Parent") {
-            return { type: "yes", hint: ["Removing parent from revision ", from.child.id.change] };
+            return {
+                type: "yes", hints: {
+                    move: ["Removing parent from revision ", from.child.id.change]
+                }
+            };
         } else if (from.type == "Change") {
-            return { type: "yes", hint: [`Squashing changes at ${from.path.relative_path}`] };
+            return {
+                type: "yes", hints: {
+                    move: [`Squashing changes at ${from.path.relative_path}`]
+                }
+            };
         } else if (from.type == "Ref" && from.ref.type != "Tag") {
-            return { type: "yes", hint: ["Moving branch ", from.ref] };
+            return {
+                type: "yes", hints: {
+                    move: ["Moving branch ", from.ref]
+                }
+            };
         }
 
         return { type: "no" };
@@ -59,31 +77,53 @@ export default class BinaryMutator {
             return { type: "no" };
         }
 
+        // revs can drop on other revs, inbetween pairs (Parent) or on parent sets (Merge)
         if (this.#from.type == "Revision") {
             if (this.#to.type == "Revision") {
-                return { type: "yes", hint: ["Rebasing revision ", this.#from.header.id.change, " onto ", this.#to.header.id.change] };
+                return {
+                    type: "yes", hints: {
+                        move: ["Rebasing revision ", this.#from.header.id.change, " onto ", this.#to.header.id.change],
+                        copy: ["Duplicating revision ", this.#from.header.id.change, " onto ", this.#to.header.id.change]
+                    }
+                };
             } else if (this.#to.type == "Parent") {
                 if (this.#to.child == this.#from.header) {
                     return { type: "no" };
                 } else if (this.#to.child.is_immutable) {
                     return { type: "maybe", hint: "(can't insert before an immutable revision)" };
                 } else {
-                    return { type: "yes", hint: ["Inserting revision ", this.#from.header.id.change, " before ", this.#to.child.id.change] };
+                    return {
+                        type: "yes", hints: {
+                            move: ["Inserting revision ", this.#from.header.id.change, " before ", this.#to.child.id.change]
+                        }
+                    };
                 }
             } else if (this.#to.type == "Merge") {
                 if (this.#to.header.id.change.hex == this.#from.header.id.change.hex) {
                     return { type: "no" };
                 } else {
-                    return { type: "yes", hint: ["Adding parent to revision ", this.#to.header.id.change] };
+                    return {
+                        type: "yes", hints: {
+                            move: ["Adding parent to revision ", this.#to.header.id.change]
+                        }
+                    };
                 }
             } else if (this.#to.type == "Repository") {
-                return { type: "yes", hint: ["Abandoning commit ", this.#from.header.id.commit] };
+                return {
+                    type: "yes", hints: {
+                        move: ["Abandoning commit ", this.#from.header.id.commit]
+                    }
+                };
             }
         }
 
         if (this.#from.type == "Parent") {
             if (this.#to.type == "Repository") {
-                return { type: "yes", hint: ["Removing parent from revision ", this.#from.child.id.change] };
+                return {
+                    type: "yes", hints: {
+                        move: ["Removing parent from revision ", this.#from.child.id.change]
+                    }
+                };
             }
         }
 
@@ -94,11 +134,19 @@ export default class BinaryMutator {
                 } else if (this.#to.header.is_immutable) {
                     return { type: "maybe", hint: "(revision is immutable)" };
                 } else {
-                    return { type: "yes", hint: [`Squashing changes at ${this.#from.path.relative_path} into `, this.#to.header.id.change] };
+                    return {
+                        type: "yes", hints: {
+                            move: [`Squashing changes at ${this.#from.path.relative_path} into `, this.#to.header.id.change]
+                        }
+                    };
                 }
             } else if (this.#to.type == "Repository") {
                 if (this.#from.header.parent_ids.length == 1) {
-                    return { type: "yes", hint: [`Restoring changes at ${this.#from.path.relative_path} from parent `, this.#from.header.parent_ids[0]] };
+                    return {
+                        type: "yes", hints: {
+                            move: [`Restoring changes at ${this.#from.path.relative_path} from parent `, this.#from.header.parent_ids[0]]
+                        }
+                    };
                 } else {
                     return { type: "maybe", hint: "Can't restore (revision has multiple parents)" };
                 }
@@ -111,7 +159,11 @@ export default class BinaryMutator {
                 if (this.#to.header.id.change.hex == this.#from.header.id.change.hex) {
                     return { type: "no" };
                 } else {
-                    return { type: "yes", hint: ["Moving branch ", this.#from.ref, " to ", this.#to.header.id.change] };
+                    return {
+                        type: "yes", hints: {
+                            move: ["Moving branch ", this.#from.ref, " to ", this.#to.header.id.change]
+                        }
+                    };
                 }
             }
 
@@ -121,17 +173,27 @@ export default class BinaryMutator {
                 if (this.#from.ref.is_tracked) {
                     return { type: "maybe", hint: "(already tracked)" };
                 } else {
-                    return { type: "yes", hint: ["Tracking remote branch ", this.#from.ref] };
+                    return {
+                        type: "yes", hints: {
+                            move: ["Tracking remote branch ", this.#from.ref]
+                        }
+                    };
                 }
             }
 
             // anything -> anywhere: delete
             else if (this.#to.type == "Repository") {
                 if (this.#from.ref.type == "LocalBranch") {
-                    return { type: "yes", hint: ["Deleting branch ", this.#from.ref] };
+                    return {
+                        type: "yes", hints: {
+                            move: ["Deleting branch ", this.#from.ref]
+                        }
+                    };
                 } else {
                     return {
-                        type: "yes", hint: ["Forgetting remote branch ", this.#from.ref]
+                        type: "yes", hints: {
+                            move: ["Forgetting remote branch ", this.#from.ref]
+                        }
                     };
                 }
             }
@@ -140,12 +202,16 @@ export default class BinaryMutator {
         return { type: "no" };
     }
 
-    doDrop() {
+    doDrop(effect: DropEffect) {
         if (this.#from.type == "Revision") {
             if (this.#to.type == "Revision") {
-                // rebase rev onto single target
-                mutate<MoveRevision>("move_revision", { id: this.#from.header.id, parent_ids: [this.#to.header.id] });
-                return;
+                if (effect == "move") {
+                    // rebase rev onto single target
+                    mutate<MoveRevision>("move_revision", { id: this.#from.header.id, parent_ids: [this.#to.header.id] });
+                    return;
+                } else if (effect == "copy") {
+                    console.log("todo: dupe rev");
+                }
             } else if (this.#to.type == "Parent") {
                 // rebase between targets 
                 mutate<InsertRevision>("insert_revision", { id: this.#from.header.id, after_id: this.#to.header.id, before_id: this.#to.child.id });
@@ -198,6 +264,6 @@ export default class BinaryMutator {
             }
         }
 
-        console.log("error: unknown validated mutation");
+        console.log("error: unknown validated mutation", [effect, this.#from, this.#to]);
     }
 }

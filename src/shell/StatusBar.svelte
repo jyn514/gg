@@ -7,25 +7,25 @@
     import type { GitFetch } from "../messages/GitFetch";
     import type { GitPush } from "../messages/GitPush";
     import type { UndoOperation } from "../messages/UndoOperation";
-    import type { RichHint } from "../mutators/BinaryMutator";
+    import type { DropEffect, RichText } from "../mutators/BinaryMutator";
     import BinaryMutator from "../mutators/BinaryMutator";
-    import { currentSource, currentTarget, hasModal, repoConfigEvent, repoStatusEvent } from "../stores";
+    import { currentSource, currentTarget, currentEffect, hasModal, repoConfigEvent, repoStatusEvent } from "../stores";
     import BranchSpan from "../controls/BranchSpan.svelte";
 
     export let target: boolean;
 
-    let dropHint: RichHint | null = null;
+    let dropHint: RichText | null = null;
     let maybe = false;
 
-    $: setDropHint($currentSource, $currentTarget);
+    $: setDropHint($currentSource, $currentTarget, $currentEffect);
 
-    function setDropHint(source: Operand | null, target: Operand | null) {
+    function setDropHint(source: Operand | null, target: Operand | null, effect: DropEffect) {
         maybe = false;
         if (source) {
             if (target) {
                 let canDrop = new BinaryMutator(source, target).canDrop();
                 if (canDrop.type == "yes") {
-                    dropHint = canDrop.hint;
+                    dropHint = canDrop.hints[effect] || null;
                     return;
                 } else if (canDrop.type == "maybe") {
                     dropHint = [canDrop.hint];
@@ -36,7 +36,7 @@
 
             let canDrag = BinaryMutator.canDrag(source);
             if (canDrag.type == "yes") {
-                dropHint = canDrag.hint;
+                dropHint = canDrag.hints[effect] || null;
                 return;
             }
         }
